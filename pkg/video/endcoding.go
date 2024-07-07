@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 func (f Frame) RunLengthEncode() []byte {
@@ -125,7 +126,10 @@ func (c *FrameChunk) Decode(bs []byte) error {
 // dataLen=8
 // totalChunks=2+1=3
 
-func ChunkFrameData(data []byte, size int, id uint32) []FrameChunk {
+func ChunkFrameData(data []byte, size int, id uint32, ts time.Time) []FrameChunk {
+	timestampBytes := make([]byte, 8) // Assuming 64-bit timestamp
+	binary.LittleEndian.PutUint64(timestampBytes, uint64(ts.UnixMilli()))
+	data = append(timestampBytes, data...)
 	dataLen := len(data)
 	totalChunks := (dataLen + size - 1) / size
 	chunks := make([]FrameChunk, totalChunks)
@@ -155,19 +159,18 @@ func NewFrameCatcher() FrameChunkCatcher {
 	return make(FrameChunkCatcher)
 }
 
-func (fcc FrameChunkCatcher) Catch(data []byte) Frame {
+func (fcc FrameChunkCatcher) Catch(data []byte) (Frame, uint64) {
 
 	var chunk FrameChunk
 	err := (&chunk).Decode(data)
 	if err != nil {
 		fmt.Printf("ERROR: decoding chunk: %s\n", err)
-		return nil
+		return nil, 0
 	}
 
-	// fmt.Printf("got seq %d for id=%d\n", chunk.SequenceNumber, chunk.FrameId)
-
 	if chunk.TotalChunks == 1 {
-		return RunLengthDecode(chunk.Data)
+		ts := binary.LittleEndian.Uint64(chunk.Data[:8])
+		return RunLengthDecode(chunk.Data[8:]), ts
 	}
 
 	if chunks, ok := fcc[chunk.FrameId]; ok {
@@ -176,12 +179,13 @@ func (fcc FrameChunkCatcher) Catch(data []byte) Frame {
 			sort.Slice(chunks, func(i, j int) bool {
 				return chunks[i].SequenceNumber < chunks[j].SequenceNumber
 			})
-			joinedDate := []byte{}
+			joinedData := []byte{}
 			for _, c := range chunks {
-				joinedDate = append(joinedDate, c.Data...)
+				joinedData = append(joinedData, c.Data...)
 			}
 			delete(fcc, chunk.FrameId)
-			return RunLengthDecode(joinedDate)
+			ts := binary.LittleEndian.Uint64(joinedData[:8])
+			return RunLengthDecode(joinedData[8:]), ts
 		}
 
 		fcc[chunk.FrameId] = chunks
@@ -191,5 +195,5 @@ func (fcc FrameChunkCatcher) Catch(data []byte) Frame {
 		fcc[chunk.FrameId] = chunks
 	}
 
-	return nil
+	return nil, 0
 }

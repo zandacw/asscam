@@ -2,23 +2,20 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"math"
 
 	"github.com/gordonklaus/portaudio"
 )
 
-const sampleRate = 16000
-const bufferSize = 512
 const seconds = 1
 
 type AudioBufferReader struct {
 	buffer []byte
-	stream <-chan []float32
+	stream <-chan []byte
 }
 
-func NewAudioBufferReader(stream <-chan []float32) *AudioBufferReader {
+func NewAudioBufferReader(stream <-chan []byte) *AudioBufferReader {
 	return &AudioBufferReader{
 		stream: stream,
 	}
@@ -40,7 +37,7 @@ func (r *AudioBufferReader) Read(b []byte) (int, error) {
 		// if loud {
 		// 	fmt.Println("[IN] loud")
 		// }
-		r.buffer = float32ToByte(data)
+		r.buffer = data
 	}
 
 	n := copy(b, r.buffer)
@@ -96,17 +93,8 @@ func audioLoop(ctx context.Context, streamC chan []float32) {
 	defer portaudio.Terminate()
 
 	stream, err := portaudio.OpenDefaultStream(1, 0, sampleRate, bufferSize, func(in []float32) {
-
-		var loud bool
 		for i := range in {
 			in[i] *= 50
-			if in[i] > 0.3 {
-				loud = true
-			}
-		}
-
-		if loud {
-			fmt.Println(loud)
 		}
 
 		buffer := make([]float32, bufferSize)
@@ -116,9 +104,6 @@ func audioLoop(ctx context.Context, streamC chan []float32) {
 		case streamC <- buffer:
 		case <-ctx.Done():
 			return
-		}
-		if loud {
-			fmt.Println("[end]", loud)
 		}
 	})
 

@@ -65,7 +65,7 @@ func handleConns(conn *net.UDPConn) {
 
 	bros := NewBros()
 
-	buf := make([]byte, 1024)
+	buf := make([]byte, 2048)
 
 	stats := NewStats(1)
 
@@ -92,9 +92,18 @@ func handleConns(conn *net.UDPConn) {
 			msg := message.MakeInfo("ok")
 			conn.WriteTo(msg, addr)
 		case message.Frame:
-			stats.Handle(n)
+			stats.ProcessBytes(n)
 			if otherAddr, ok := bros.otherBro(addr); ok {
 				msg := message.MakeFrame(data)
+				conn.WriteTo(msg, otherAddr)
+			} else {
+				msg := message.MakeError("empty")
+				conn.WriteTo(msg, addr)
+			}
+		case message.Audio:
+			stats.ProcessBytes(n)
+			if otherAddr, ok := bros.otherBro(addr); ok {
+				msg := message.MakeAudio(data)
 				conn.WriteTo(msg, otherAddr)
 			} else {
 				msg := message.MakeError("empty")

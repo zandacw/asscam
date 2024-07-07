@@ -19,7 +19,8 @@ func frameToAscii(frame gocv.Mat, width int) [][]rune {
 
 	// Resize the frame to a smaller size for better ASCII art visualization
 	aspectRatio := float64(gray.Rows()) / float64(gray.Cols())
-	height := int(float64(width) * aspectRatio)
+	height := int(float64(width) * aspectRatio * 0.75)
+
 	resized := gocv.NewMat()
 	defer resized.Close()
 	gocv.Resize(gray, &resized, image.Point{X: width, Y: height}, 0, 0, gocv.InterpolationArea)

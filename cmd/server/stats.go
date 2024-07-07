@@ -15,6 +15,7 @@ type Stats struct {
 	intervalTime  time.Time
 	interval      uint8
 	mu            sync.Mutex
+	totalMessages int
 }
 
 func NewStats(interval uint8) *Stats {
@@ -28,6 +29,7 @@ func NewStats(interval uint8) *Stats {
 func (s *Stats) ProcessBytes(n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.totalMessages++
 	s.totalBytes += n
 	s.intervalBytes += n
 	if since := time.Since(s.intervalTime).Seconds(); since > float64(s.interval) {
@@ -36,6 +38,7 @@ func (s *Stats) ProcessBytes(n int) {
 			"%.2f KB/s\n",
 			float64(s.intervalBytes)/float64(since)/1000.0,
 		)
+		fmt.Printf("avg msg %dB\n", s.totalBytes/s.totalMessages)
 		s.intervalBytes = 0
 		s.intervalTime = time.Now()
 	}

@@ -8,13 +8,11 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/langlandsbrogram/asscam/pkg/audio"
 	"github.com/langlandsbrogram/asscam/pkg/message"
 	"github.com/langlandsbrogram/asscam/pkg/video"
-)
-
-const (
-	udpChunkSize = 256
 )
 
 // Config holds configuration parsed from CLI arguments
@@ -22,7 +20,7 @@ type Config struct {
 	ServerAddr     string
 	Name           string
 	Width          int
-	HideVideo      bool
+	Hide           bool
 	FrameChunkSize int
 }
 
@@ -35,7 +33,7 @@ func argsParsing() (Config, error) {
 	flag.StringVar(&config.Name, "name", "", "Your name")
 	flag.IntVar(&config.Width, "width", 0, "Width of the video")
 	flag.IntVar(&config.FrameChunkSize, "chunksize", 256, "Frame chunk size (default: 256)")
-	flag.BoolVar(&config.HideVideo, "hide", false, "Flag to indicate whether to show video or not")
+	flag.BoolVar(&config.Hide, "hide", false, "Flag to indicate whether to show video or not")
 
 	// Parse command-line arguments
 	flag.Parse()
@@ -105,17 +103,44 @@ func main() {
 		os.Exit(1)
 	}
 
+	aud, err := audio.NewAudio()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	defer aud.Close()
+
+	go aud.Start()
+
+	player, err := audio.NewPlayer()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	defer player.Close()
+	player.Start()
+
 	datas := dataStream(ctx, conn, args.FrameChunkSize)
 
 	chunkCatcher := video.NewFrameCatcher()
 
 	var frameId uint32
 	var oldFrame video.Frame
+	var lastFrameTime time.Time
+
+	go func() {
+
+		for audioSeg := range aud.Output {
+			msg := message.MakeAudio(audioSeg)
+			conn.Write(msg)
+		}
+	}()
+
 	for {
 		select {
 		case frame := <-frames:
 			encoded := frame.RunLengthEncode()
-			chunks := video.ChunkFrameData(encoded, args.FrameChunkSize, frameId)
+			chunks := video.ChunkFrameData(encoded, args.FrameChunkSize, frameId, lastFrameTime)
 			for _, c := range chunks {
 				data := c.Encode()
 				msg := message.MakeFrame(data)
@@ -127,15 +152,20 @@ func main() {
 		case data := <-datas:
 			switch data, msg := message.Parse(data); msg {
 			case message.Info:
+			case message.Audio:
+				d := make([]byte, len(data))
+				copy(d, data)
+				player.Input <- d
 			case message.Frame:
 				if len(data) < 5 {
 					continue
 				}
 
-				frame := chunkCatcher.Catch(data)
+				frame, _ := chunkCatcher.Catch(data)
 				if frame != nil {
 					frame.Display(oldFrame)
 					oldFrame = frame
+					_ = oldFrame
 				}
 			case message.Error:
 			case message.Unknown:
