@@ -1,0 +1,164 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+
+	"github.com/langlandsbrogram/asscam/pkg/video"
+)
+
+const (
+	udpChunkSize = 256
+)
+
+func main() {
+
+	var serverAddr string
+	var width int
+	var showVideo bool
+
+	// Define flags
+	flag.StringVar(&serverAddr, "server", "", "Server address (e.g., 198.1.1.8:6969)")
+	flag.IntVar(&width, "width", 0, "Width of the video")
+	flag.BoolVar(&showVideo, "show", false, "Flag to indicate whether to show video or not")
+
+	// Parse command-line arguments
+	flag.Parse()
+
+	// Check if required flags are provided
+	if serverAddr == "" {
+		fmt.Println("Error: server address is required")
+		flag.PrintDefaults()
+		return
+	}
+
+	if len(os.Args) == 1 {
+		fmt.Println("Please provide host:port to connect to")
+		os.Exit(1)
+	}
+
+	if len(os.Args) == 2 {
+		fmt.Println("please provide width")
+		os.Exit(1)
+	}
+
+	var showVideo bool
+	if len(os.Args) == 4 {
+		showVideo = true
+	}
+
+	width, _ := strconv.Atoi(os.Args[2])
+
+	udpAddr, err := net.ResolveUDPAddr("udp", os.Args[1])
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	// Dial to the address with UDP
+	conn, err := net.DialUDP("udp", nil, udpAddr)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	defer func() {
+		removeMe := []byte{99}
+		conn.Write(removeMe)
+	}()
+
+	err = sendName(conn, "zanda")
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		cancel()
+	}()
+
+	frameC, err := video.Start(ctx, width)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	defer cancel()
+
+	udpC := make(chan []byte)
+	go readFromUDP(conn, udpC)
+
+	chunkCatcher := video.NewFrameCatcher()
+	var oldFrame video.Frame
+	frameId := uint32(0)
+	for {
+		select {
+		case frame := <-frameC:
+			if !showVideo {
+				continue
+			}
+
+			encoded := frame.RunLengthEncode()
+			chunks := video.ChunkFrameData(encoded, udpChunkSize, frameId)
+			for _, c := range chunks {
+				data := c.Encode()
+				msg := append([]byte{1}, data...)
+				conn.Write(msg)
+			}
+
+			frameId++
+
+		case data := <-udpC:
+			switch data[0] {
+			case 0:
+				// OK response from server
+			case 1:
+				if len(data) < 5 {
+					continue
+				}
+
+				data = data[1:]
+				frame := chunkCatcher.Catch(data)
+				if frame != nil {
+					frame.Display(oldFrame)
+					oldFrame = frame
+				}
+
+			case 99:
+				// ERROR from server
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+
+}
+
+// Function to read from the UDP connection and send messages to a channel
+func readFromUDP(conn *net.UDPConn, udpC chan<- []byte) {
+	buffer := make([]byte, 2048)
+	for {
+		n, _, err := conn.ReadFromUDP(buffer)
+		if err != nil {
+			fmt.Println("Error: ", err)
+			continue
+		}
+		data := make([]byte, n)
+		copy(data, buffer[:n])
+		udpC <- data
+	}
+}
+
+func sendName(conn *net.UDPConn, name string) error {
+	msg := append([]byte{0}, []byte(name)...)
+	_, err := conn.Write(msg)
+	return err
+}
