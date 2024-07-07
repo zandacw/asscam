@@ -48,6 +48,7 @@ func main() {
 	// player.Play()
 	//
 	// <-ctx.Done()
+
 	frames, err := video.Start(ctx, videoWidth)
 	if err != nil {
 		panic(err)
@@ -63,6 +64,7 @@ func main() {
 		case <-ctx.Done():
 			return
 		}
+
 		totalFrames++
 		// elapsed := time.Since(startTime)
 		// elapsedSecs := elapsed.Seconds()
